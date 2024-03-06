@@ -34,6 +34,8 @@ def main():
     load_parser.add_argument("-t", "--retry", type=str, default="none", help="Request retry strategy. See README for details", choices=["none", "exponential"])
     load_parser.add_argument("-e", "--deployment", type=str, help="Azure OpenAI deployment name.", required=True)
     load_parser.add_argument("api_base_endpoint", help="Azure OpenAI deployment base endpoint.", nargs=1)
+    load_parser.add_argument("--non-stream", action="store_true", dest="non_stream", help="Disable stream mode, default is on.")
+    load_parser.add_argument("--request-path", type=str, dest="request_path", help="Use the pre-created request from the path instead of random generated.")
     load_parser.set_defaults(func=load)
 
     tokenizer_parser = sub_parsers.add_parser("tokenize", help="Text tokenization tool.")

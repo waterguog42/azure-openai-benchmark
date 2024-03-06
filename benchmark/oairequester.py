@@ -47,10 +47,12 @@ class OAIRequester:
     :param url: Full deployment URL in the form of https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completins?api-version=<api_version>
     :param backoff: Whether to retry throttled or unsuccessful requests.
     """
-    def __init__(self, api_key: str, url: str, backoff=False):
+    def __init__(self, api_key: str, url: str, backoff=False, stream=True):
         self.api_key = api_key
         self.url = url
         self.backoff = backoff
+        self.stream = stream
+        print(f"stream: {self.stream}")
 
     async def call(self, session:aiohttp.ClientSession, body: dict) -> RequestStats:
         """
@@ -67,7 +69,7 @@ class OAIRequester:
         """
         stats = RequestStats()
         # operate only in streaming mode so we can collect token stats.
-        body["stream"] = True
+        body["stream"] = self.stream
         try:
             await self._call(session, body, stats)
         except Exception as e:

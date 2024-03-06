@@ -16,50 +16,8 @@ from .oairequester import OAIRequester
 from .oaitokenizer import num_tokens_from_messages
 from .ratelimiting import NoRateLimiter, RateLimiter
 from .statsaggregator import _StatsAggregator
-
-
-class _RequestBuilder:
-   """
-   Wrapper iterator class to build request payloads.
-   """
-   def __init__(self, model:str, context_tokens:int,
-                max_tokens:None, 
-                completions:None, 
-                frequency_penalty:None, 
-                presence_penalty:None, 
-                temperature:None, 
-                top_p:None):
-      self.model = model
-      self.context_tokens = context_tokens
-      self.max_tokens = max_tokens
-      self.completions = completions
-      self.frequency_penalty = frequency_penalty
-      self.presence_penalty = presence_penalty
-      self.temperature = temperature
-      self.top_p = top_p
-
-      logging.info("warming up prompt cache")
-      _generate_messages(self.model, self.context_tokens, self.max_tokens)
-
-   def __iter__(self) -> Iterator[dict]:
-      return self
-
-   def __next__(self) -> (dict, int):
-      messages, messages_tokens = _generate_messages(self.model, self.context_tokens, self.max_tokens)
-      body = {"messages":messages}
-      if self.max_tokens is not None:
-         body["max_tokens"] = self.max_tokens
-      if self.completions is not None:
-         body["n"] = self.completions
-      if self.frequency_penalty is not None:
-         body["frequency_penalty"] = self.frequency_penalty
-      if self.presence_penalty is not None:
-         body["presence_penalty"] = self.presence_penalty
-      if self.temperature is not None:
-         body["temperature"] = self.temperature
-      if self.top_p is not None:
-         body["top_p"] = self.top_p
-      return body, messages_tokens
+from .requestbuilder import _FileRequestBuilder, _RequestBuilder
+from .requestbuilder import _RandomRequestBuilder
 
 def load(args):
    try:
@@ -90,16 +48,22 @@ def load(args):
 
    logging.info(f"using shape profile {args.shape_profile}: context tokens: {context_tokens}, max tokens: {max_tokens}")
 
-   request_builder = _RequestBuilder("gpt-4-0613", context_tokens,
-      max_tokens=max_tokens,
-      completions=args.completions,
-      frequency_penalty=args.frequency_penalty,
-      presence_penalty=args.presence_penalty,
-      temperature=args.temperature,
-      top_p=args.top_p)
 
    logging.info("starting load...")
 
+   # create the request builder
+   if (args.request_path is not None):
+      request_builder = _FileRequestBuilder(args.request_path)
+   else:
+      request_builder = _RandomRequestBuilder("gpt-4-0613", context_tokens,
+         max_tokens=max_tokens,
+         completions=args.completions,
+         frequency_penalty=args.frequency_penalty,
+         presence_penalty=args.presence_penalty,
+         temperature=args.temperature,
+         top_p=args.top_p)
+
+   # run the load
    _run_load(request_builder,
       max_concurrency=args.clients, 
       api_key=api_key,
@@ -109,7 +73,8 @@ def load(args):
       request_count=args.requests,
       duration=args.duration,
       aggregation_duration=args.aggregation_window,
-      json_output=args.output_format=="jsonl")
+      json_output=args.output_format=="jsonl",
+      stream=not args.non_stream)
 
 def _run_load(request_builder: Iterable[dict],
               max_concurrency: int, 
@@ -120,13 +85,14 @@ def _run_load(request_builder: Iterable[dict],
               duration=None, 
               aggregation_duration=60,
               request_count=None,
-              json_output=False):
+              json_output=False,
+              stream=True):
    aggregator = _StatsAggregator(
       window_duration=aggregation_duration,
       dump_duration=1, 
       clients=max_concurrency,
       json_output=json_output)
-   requester = OAIRequester(api_key, url, backoff=backoff)
+   requester = OAIRequester(api_key, url, backoff=backoff, stream=stream)
 
    async def request_func(session:aiohttp.ClientSession):
       nonlocal aggregator
@@ -152,44 +118,6 @@ def _run_load(request_builder: Iterable[dict],
    aggregator.stop()
 
    logging.info("finished load test")
-
-CACHED_PROMPT=""
-CACHED_MESSAGES_TOKENS=0
-def _generate_messages(model:str, tokens:int, max_tokens:int=None) -> ([dict], int):
-   """
-   Generate `messages` array based on tokens and max_tokens.
-   Returns Tuple of messages array and actual context token count.
-   """
-   global CACHED_PROMPT
-   global CACHED_MESSAGES_TOKENS
-   try:
-      r = wonderwords.RandomWord()
-      messages = [{"role":"user", "content":str(time.time()) + " "}]
-      if max_tokens is not None:
-         messages.append({"role":"user", "content":str(time.time()) + f" write a long essay about life in at least {max_tokens} tokens"})
-      messages_tokens = 0
-
-      if len(CACHED_PROMPT) > 0:
-         messages[0]["content"] += CACHED_PROMPT
-         messages_tokens = CACHED_MESSAGES_TOKENS
-      else:
-         prompt = ""
-         base_prompt = messages[0]["content"]
-         while True:
-            messages_tokens = num_tokens_from_messages(messages, model)
-            remaining_tokens = tokens - messages_tokens
-            if remaining_tokens <= 0:
-               break
-            prompt += " ".join(r.random_words(amount=math.ceil(remaining_tokens/4))) + " "
-            messages[0]["content"] = base_prompt + prompt
-
-         CACHED_PROMPT = prompt
-         CACHED_MESSAGES_TOKENS = messages_tokens
-
-   except Exception as e:
-      print (e)
-
-   return (messages, messages_tokens)
 
 def _validate(args):
     if len(args.api_version) == 0:
